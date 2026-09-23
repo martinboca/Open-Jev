@@ -1,4 +1,5 @@
 import json
+from http.client import HTTPConnection
 from pathlib import Path
 import tempfile
 import threading
@@ -81,6 +82,34 @@ class ServingTest(unittest.TestCase):
                 self.assertEqual(ctx.exception.code, code)
                 ctx.exception.close()
         finally:
+            server.shutdown()
+            server.server_close()
+            worker.join()
+
+    def test_keep_alive_serves_many_decisions_over_one_connection(self):
+        server = make_server(Predictor(ExplicitTestScorer(), model_name="test"), port=0)
+        worker = threading.Thread(target=server.serve_forever, daemon=True)
+        worker.start()
+        body = json.dumps(request()).encode()
+        connection = HTTPConnection("127.0.0.1", server.server_port)
+        try:
+            sockets = set()
+            for _ in range(3):
+                connection.request("POST", "/v1/inference", body, {"Content-Type": "application/json"})
+                response = connection.getresponse()
+                self.assertEqual(response.status, 200)
+                self.assertFalse(response.will_close)
+                self.assertEqual(json.loads(response.read())["answers"]["large"]["choice"], "8")
+                sockets.add(connection.sock.getsockname())
+            self.assertEqual(len(sockets), 1)  # No TCP handshake between decisions.
+
+            connection.request("POST", "/v1/inference", body, {"Content-Type": "text/plain"})
+            response = connection.getresponse()
+            self.assertEqual(response.status, 415)
+            self.assertTrue(response.will_close)
+            response.read()
+        finally:
+            connection.close()
             server.shutdown()
             server.server_close()
             worker.join()

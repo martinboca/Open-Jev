@@ -26,14 +26,16 @@ def strict_json(data):
 
 
 def make_server(predictor, host="127.0.0.1", port=8791, *, static_root=None,
-                max_body_bytes=4 * 1024 * 1024):
+                max_body_bytes=4 * 1024 * 1024, idle_timeout=30):
     root = Path(static_root or Path(__file__).resolve().parent.parent / "examples").resolve()
     lock = threading.Lock()
 
     class Handler(BaseHTTPRequestHandler):
+        protocol_version = "HTTP/1.1"
+
         def setup(self):
             super().setup()
-            self.connection.settimeout(30)
+            self.connection.settimeout(idle_timeout)
 
         def log_message(self, *args):
             pass  # Do not log request bodies, prompts, or credentials.
@@ -45,8 +47,19 @@ def make_server(predictor, host="127.0.0.1", port=8791, *, static_root=None,
             self.send_header("Content-Length", str(len(payload)))
             self.send_header("Cache-Control", "no-store")
             self.send_header("X-Content-Type-Options", "nosniff")
+            if self.close_connection:
+                self.send_header("Connection", "close")
             self.end_headers()
             self.wfile.write(payload)
+
+        def refuse(self, status, data):
+            """Reject before reading the body, so this connection cannot continue.
+
+            An unread body would be parsed as the start of the next request on a
+            persistent connection.
+            """
+            self.close_connection = True
+            return self.send(status, data)
 
         def do_GET(self):
             path = urlsplit(self.path).path
@@ -79,18 +92,19 @@ def make_server(predictor, host="127.0.0.1", port=8791, *, static_root=None,
 
         def do_POST(self):
             if urlsplit(self.path).path not in ("/v1/inference", "/v1/systemone", "/api/jev"):
-                return self.send(404, {"error": "not found"})
+                return self.refuse(404, {"error": "not found"})
             origin = self.headers.get("Origin")
             if origin and urlsplit(origin).netloc != self.headers.get("Host"):
-                return self.send(403, {"error": "cross-origin requests are disabled"})
+                return self.refuse(403, {"error": "cross-origin requests are disabled"})
             if self.headers.get_content_type() != "application/json":
-                return self.send(415, {"error": "Content-Type must be application/json"})
+                return self.refuse(415, {"error": "Content-Type must be application/json"})
             try:
                 length = int(self.headers.get("Content-Length", "0"))
                 if length < 1 or length > max_body_bytes:
-                    return self.send(413, {"error": "request body size is outside server limits"})
+                    return self.refuse(413, {"error": "request body size is outside server limits"})
                 body = self.rfile.read(length)
                 if len(body) != length:
+                    self.close_connection = True
                     raise ValueError("incomplete request body")
                 request = strict_json(body)
                 with lock:
@@ -118,10 +132,13 @@ def main():
                         help="Enable request-local token-prefix reuse; default off pending full-checkpoint BF16 validation")
     parser.add_argument("--host", default="127.0.0.1")
     parser.add_argument("--port", type=int, default=8791)
+    parser.add_argument("--idle-timeout", type=float, default=30,
+                        help="Seconds an idle keep-alive connection is held before the server closes it")
     args = vars(parser.parse_args())
     host, port = args.pop("host"), args.pop("port")
+    idle_timeout = args.pop("idle_timeout")
     predictor = load_predictor(**args)
-    server = make_server(predictor, host, port)
+    server = make_server(predictor, host, port, idle_timeout=idle_timeout)
     print(json.dumps({"url": f"http://{host}:{server.server_port}", "model": predictor.model_name,
                       "method": predictor.method}), flush=True)
     try:
