@@ -125,7 +125,8 @@ def main():
     group.add_argument("--checkpoint")
     group.add_argument("--model", dest="model_id")
     parser.add_argument("--revision")
-    parser.add_argument("--device", default="cuda:0")
+    parser.add_argument("--device", default="auto",
+                        help="Torch device, or auto to pick cuda, then mps, then cpu")
     parser.add_argument("--max-length", type=int)
     parser.add_argument("--batch-size", type=int, default=32)
     parser.add_argument("--prefix-cache", action=argparse.BooleanOptionalAction, default=False,

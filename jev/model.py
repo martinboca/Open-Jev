@@ -11,9 +11,30 @@ from transformers import AutoModelForImageTextToText, AutoTokenizer
 from .api import candidate_prompts
 
 
+def resolve_device(device):
+    """Resolve "auto" to an available backend. An explicit request is never overridden.
+
+    An explicit device that is unavailable must fail in torch rather than be
+    silently downgraded, because the device changes measured latency.
+    """
+    if device != "auto":
+        return device
+    if torch.cuda.is_available():
+        return "cuda:0"
+    if torch.backends.mps.is_available():
+        return "mps"
+    return "cpu"
+
+
+def parameter_dtype(device):
+    """CPU keeps float32; accelerators hold the backbone in bfloat16 as trained."""
+    return torch.float32 if torch.device(device).type == "cpu" else torch.bfloat16
+
+
 class DecisionModel(nn.Module):
-    def __init__(self, model_id, revision, device="cuda:0", lora_rank=8, max_length=384):
+    def __init__(self, model_id, revision, device="auto", lora_rank=8, max_length=384):
         super().__init__()
+        device = resolve_device(device)
         self.model_id, self.revision = model_id, revision
         self.max_length, self.device_name = max_length, device
         self.tokenizer = AutoTokenizer.from_pretrained(model_id, revision=revision)
@@ -21,7 +42,7 @@ class DecisionModel(nn.Module):
         if self.tokenizer.pad_token_id is None:
             self.tokenizer.pad_token = self.tokenizer.eos_token
         full = AutoModelForImageTextToText.from_pretrained(
-            model_id, revision=revision, torch_dtype=torch.bfloat16,
+            model_id, revision=revision, dtype=parameter_dtype(device),
             attn_implementation="sdpa", device_map={"": device},
         )
         # Initialize a discriminative scalar from the pretrained Yes/No readout.
@@ -103,11 +124,12 @@ class DecisionModel(nn.Module):
         return score_cached(self, records, batch_size=batch_size)
 
     @classmethod
-    def load(cls, output, device="cuda:0"):
+    def load(cls, output, device="auto"):
         output = Path(output)
         config = json.loads((output / "model.json").read_text())
         model = cls(config["model_id"], config["revision"], device=device,
                     lora_rank=0, max_length=config["max_length"])
+        device = model.device_name
         if config["lora_rank"]:
             from peft import PeftModel
             model.backbone = PeftModel.from_pretrained(model.backbone, output / "adapter")

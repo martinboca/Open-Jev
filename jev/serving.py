@@ -113,7 +113,7 @@ class TorchScorer:
         return [row.float().cpu().tolist() for row in rows], stats
 
 
-def load_predictor(*, checkpoint=None, model_id=None, revision=None, device="cuda:0",
+def load_predictor(*, checkpoint=None, model_id=None, revision=None, device="auto",
                    max_length=None, batch_size=32, prefix_cache=False):
     from .model import DecisionModel
     if bool(checkpoint) == bool(model_id):
