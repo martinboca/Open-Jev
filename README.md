@@ -96,11 +96,21 @@ python -m unittest discover -s tests -v
 
 # Add the pinned model runtime dependencies.
 python -m pip install -e '.[train]'
+
+python -m pip install -e '.[cuda]'
 hf download ZefanCai/Open-Jev-2B \
   --revision 0c7aa498b1627be8da4acf34c863ff0ee0a92785 --local-dir models/Open-Jev-2B
 python -m jev.server --checkpoint models/Open-Jev-2B/package/checkpoint \
   --device cuda:0 --max-length 4096 --batch-size 1 --no-prefix-cache
 ```
+
+The `cuda` extra is not optional for latency work. Most of Qwen3.5 is
+linear attention: 18 of the 2B's 24 layers and 24 of the 9B's 32. Scoring is
+prefill only, so every one of those layers runs `chunk_gated_delta_rule`, which
+without `flash-linear-attention` becomes a pure torch fallback. The measured
+latencies in [docs/inference-latency.md](docs/inference-latency.md) were recorded
+with that kernel available and do not describe a host without it. The extra is
+marked Linux-only because the kernel requires CUDA
 
 The download is pinned to the published 2B revision. The 9B package uses the
 same layout at revision `47e966881e489511c0c7f5633a9e1960a676a551`. The public
