@@ -1,0 +1,20 @@
+#:schema https://rlbot.org/schemas/agent.json
+
+[settings]
+name = "Open-Jev"
+loadout_file = "loadout.toml"
+root_dir = ""
+run_command = "..\\venv\\Scripts\\python bot.py"
+# Linux runs the bot natively, outside the Wine prefix that holds Rocket League.
+# It only needs the standard library plus rlbot: torch and CUDA live on the
+# inference server, reached over HTTP.
+run_command_linux = "../venv/bin/python bot.py"
+agent_id = "openjev/rocketleague"
+
+[details]
+description = """
+Steering and boost decided by a local Open-Jev 2B decision model over HTTP.
+Throttle and jump are heuristics: the model did not discriminate on either.
+"""
+developer = "martinboca"
+language = "Python"
