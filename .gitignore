@@ -10,3 +10,5 @@ build/
 *.safetensors
 .DS_Store
 /models
+
+checkpoints
